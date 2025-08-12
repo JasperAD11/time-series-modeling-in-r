@@ -1,0 +1,455 @@
+---
+title: "Assignment 2"
+author: "Jasper Sänger"
+date: "2024-12-3"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup & libraries, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  warning = F,
+  message = F,
+  fig.align = "center", 
+  fig.width = 10,
+  fig.height = 4
+)
+
+#loading necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(tsibble)
+library(fable)
+library(feasts)
+library(lubridate)
+library(patchwork)
+library(gridExtra)
+```
+
+```{r same theme throughout for ggplot}
+theme_set(theme_bw())
+```
+
+## I. Assessing Trend
+
+*•* Assess the need for a trend component and include it in the model,
+as you see fit. I*f needed, reduce the data to model only those
+observations for which the trend is consistent. Note that, if you decide
+to reduce the data, to be consistent from here on you must work with the
+reduced data.*
+
+### Series 1
+
+```{r given by teacher}
+data1.tibble <- readr::read_csv("assignment_1-2024-data1.csv", show_col_types = F)
+colnames(data1.tibble) <- c('t', 'value')
+data1 <- data1.tibble %>%
+mutate(t = yearmonth(t)) %>%
+as_tsibble(index = t)
+ggplot() +
+geom_line(aes(x = t, y = value), data = data1 %>% slice(1:56), lty = 2, col = 'red2') +
+geom_line(aes(x = t, y = value), data = data1 %>% slice(57:n()))
+```
+
+For `data1`, an upwards trend is visible from around January 2015
+onward. For further analysis, exploration and modelling, the data set is
+modified and will no longer consider data prior to year 2015. Below, the
+condensed data1_final graph is displayed, alongside a trend line,
+indicating this upward trend.
+
+```{r reducing data1}
+data1_final <- data1 %>% filter(t >= yearmonth("2015 Jan"))
+```
+
+```{r cleaning environment}
+rm(list = setdiff(ls(), c("data1_final", "data2")))
+```
+
+```{r plotting data1_final with trend line}
+data1_final %>% ggplot(aes(x = t, y = value)) +
+  geom_line() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Final Data 1 with Trend Line (Jan 2015 onwards)", x = "Time", y = "Value", linetype = "Trend") +
+  theme_minimal()
+```
+
+```{r data1 residual analysis}
+data1_trend_model <- data1_final %>% model(TSLM(value ~ trend()))
+
+gg_tsresiduals(data1_trend_model) +
+  labs(title = "Residual Diagnostics for Data 1 Trend Model",
+       x = "Time", y = "Residuals")
+```
+
+Starting with the trend model residuals, the model displays that the
+distance between fitted values seem to average out to 0 and do not
+follow a clear pattern, with variance increasing from 2022 to 2024.
+Based on this graph alone, one can conclude that the model fits the data
+quite well. Notably, the increasing variance towards later years
+potentially indicates heteroskedasticity, which the model fails to
+capture in that period.
+
+The ACF of the residuals displays two significant values at lag 8 and 9,
+but no further pattern. This suggests that the model has room for
+improvement as there may still be some unexplained structure in the
+data. However, a broader pattern cannot be identified indicating that
+the model captures most of the systematic components of the data.
+
+The distribution of residuals follows an almost normal distribution
+(bell shaped), a characteristic of a good model.
+
+### Series 2
+
+```{r plotting data_2 with trend line}
+data2 <- readr::read_csv("assignment_1-2024-data2.csv", show_col_types = F) %>% 
+  as_tsibble(index = t)
+
+data2 %>% 
+  autoplot(u) +
+  geom_smooth(method = lm, formula = y ~ x, se = FALSE)
+```
+
+A slight downward trend can be spotted for `data2`. Subsequent residual
+analysis is necessary to explore the need and impact of incorporating
+trend in a model.
+
+```{r data2 residual analysis}
+data2_trend_model <- data2 %>% model(TSLM(u ~ trend()))
+data2_trend_model.augmented <- data2_trend_model%>%
+  augment()
+
+gg_tsresiduals(data2_trend_model)+
+    labs(title = "Residual Diagnostics for Data 2 Trend Model",
+       x = "Time", y = "Residuals")
+
+```
+
+The residuals for `data2`are dispersed around zero but seem to follow a
+systematic pattern over time.
+
+The ACF of the residuals displays significant values at each of the 30
+lags, with a clear seasonality pattern. With spikes every 7 lags, this
+could indicate weekly seasonality. This means that the trend model may
+be missing a seasonal component and could benefit from incorporating
+one.
+
+The histogram of the residuals is bell shaped and normally distributed
+around 0, which is a positive aspect of the model. However, the other
+two residual plots indicate that the trend model would require a
+seasonal component to improve.
+
+```{r report of trend model series 2}
+data2_trend_model%>%
+  report()
+```
+
+Although the coefficients are statistically significant (at the 1%
+significance level) for this model, they are extremely small, so is the
+R-squared value. The trend component does not improve the model's
+explanatory power by much and is therefore not considered for further
+modelling of `data2`.
+
+## II. Assessing Seasonality
+
+*• Check the need for seasonal fixed effects in the residuals of the
+model(s) produced in the previous point.*
+
+• Multiple seasonal fixed effects might be needed. Check them in the
+order discussed in class.
+
+### Series 1
+
+```{r creating monthly dummies model}
+data1_monthly_dummies = data1_final %>% mutate(month = factor(month(t)))
+
+data1_monthly_dummies_trend <- data1_monthly_dummies%>%
+  model(TSLM(value ~ trend() + month))
+```
+
+```{r residuals plot of monthly dummies model}
+gg_tsresiduals(data1_monthly_dummies_trend) +
+labs(title = "Residual Diagnostics for Data 1 Monthly (+Trend) Model",
+       x = "Time", y = "Residuals")
+```
+
+The residuals of the trend model incorporating monthly seasonality
+display residuals mostly centered around 0 in the time series of the
+residuals as well as the histogram. The ACF has two significant lags (8
+and 9) and does not show any further pattern. This is comparable to the
+residual analysis for the trend model without incorporating seasonality.
+
+```{r report of trend & seasonality model series 1}
+data1_monthly_dummies_trend %>% 
+  report()
+```
+
+The coefficients for month 1 (intercept after controlling trend) and
+each of the monthly dummies are not statistically significant. Only
+month 11, which has a value of 15.02 higher that the baseline while
+controlling for trend, is significant at the 10% level and could be
+considered to be incorporated. Although the R-squared is high, this is
+almost solely to the highly significant `trend()` component of the
+model. The lack of statistical significance for most dummies suggests
+that monthly seasonality might not be the best way to model periodic
+effects.
+
+### Series 2
+
+```{r creating seasonality dummies model, starting with larger seasonality}
+data2_dummies <- data2 %>%
+  mutate(
+    month = factor(month(t)),          
+    day_of_week = factor(wday(t))
+  )
+
+data2_dummies_trend_month <- data2_dummies %>%
+  model(TSLM(u ~ trend() + month))
+
+data2_dummies_trend_day <- data2_dummies %>%
+  model(TSLM(u ~ trend() + day_of_week))
+
+data2_dummies_trend_month_day <- data2_dummies %>%
+  model(TSLM(u ~ trend() + month + day_of_week))
+```
+
+```{r monthly seasonality residual analysis}
+gg_tsresiduals(data2_dummies_trend_month) +
+  labs(title = "Residual Diagnostics for Data 2 Monthly (+Trend) Model",
+       x = "Time", y = "Residuals")
+
+```
+
+The residual analysis shows similar visualizations as for the trend
+model without monthly dummies. Just as before, this suggests that the
+model is still not capturing all seasonal components present in `data2`.
+
+```{r report of trend & monthly seasonality model series 2}
+data2_dummies_trend_month%>% 
+  report()
+```
+
+The coefficients of several monthly dummies are significant at the 1%
+level, while `month7` is significant at the 5% level and `month2` and
+`month11` at the 10% level. The R-squared increased by more than 10%
+points by adding monthly dummies, highlighting that monthly seasonality
+dummies has a substantial impact on how much variance in the data is
+explained.
+
+```{r day of week dummies residual analysis}
+gg_tsresiduals(data2_dummies_trend_day) +
+  labs(title = "Residual Diagnostics for Data 2 Day-of-Week (+Trend) Model",
+       x = "Time", y = "Residuals")
+```
+
+This residual analysis for the trend model that incorporates day of week
+dummies shows that the residuals are centered around 0 but exhibit a
+clear pattern, indicating that some structure remains unexplained
+(potentially the monthly seasonality from before or something else). The
+ACF plot reveals significant autocorrelations across multiple lags,
+suggesting the model does not fully account for temporal dependencies.
+The histogram of residuals is approximately bell-shaped, indicating
+near-normality but with potential room for improvement in the model's
+fit.
+
+```{r report of trend & day of week model series 2}
+data2_dummies_trend_day%>% 
+  report()
+```
+
+The model shows significant coefficients for all week day dummies. The
+R-squared has also increased by approximately 12 percentage points
+compared to the model which only captures trend.
+
+```{r 2 levels of seasonality residual analysis}
+gg_tsresiduals(data2_dummies_trend_month_day)+
+    labs(title = "Residual Diagnostics for Data 2 Two Levels of Seasonality (+Trend) Model",
+       x = "Time", y = "Residuals")
+```
+
+The residual diagnostics for the combined levels of seasonality dummies
+model indicate improvements compared to individual models. However, the
+residuals still show structured patterns and significant
+autocorrelations remain in the ACF. This suggests further adjustments
+may be needed to fully capture dependencies based on time.
+
+```{r report of trend & 2 levels of seasonality series 2}
+data2_dummies_trend_month_day%>% 
+  report()
+```
+
+The model combining trend, month, and day dummies shows multiple
+statistically significant coefficients for both seasonal and trend
+components. The R-squared reflects better explanatory power compared to
+simpler models, but there is still room for improvement (as also
+indicated in the residual analysis).
+
+## III. Include Events
+
+*• Including events - Christmas day, as well as for the day before and
+the day after.*
+
+```{r Christmas dummy variables}
+data2 %>% 
+  mutate(
+    month = factor(month(t)), 
+    day_of_week = factor(wday(t)), 
+    christmas = day(t) == 25 & month(t) == 12,
+    day_before_christmas = day(t) == 24 & month(t) == 12,
+    day_after_christmas = day(t) == 26 & month(t) == 12
+  ) %>% 
+  relocate(t, u, christmas, day_before_christmas, day_after_christmas) -> data2_christmas
+
+data2_model_christmas <- data2_christmas %>%
+  model(TSLM(u ~ trend() + month + day_of_week + christmas + day_before_christmas + day_after_christmas))
+
+data2_model_christmas%>%
+  report()
+```
+
+None of the coefficients of the special day dummies (Christmas, day
+before and after) incorporated in this model are statistically
+significant. Therefore, their inclusion does not improve the model.
+
+## IV Predictions & accuracy
+
+*•* Split the data into a training and a testing set, make predictions,
+visualize, and compute accuracy metrics.
+
+*• Do this in the same way as in Assignment 1: follow those
+instructions.*
+
+*• Include the benchmark models (only in this part, no need to include
+them during model building).*
+
+*• If you have reduced any of the data and the split is a percentage,
+you can apply the percentage to the reduced data, rounding as needed.*
+
+```{r Splitting data & predictions}
+data2_dummies <- data2 %>%
+  mutate(
+    month = factor(month(t)),          
+    day_of_week = factor(wday(t))
+  )
+
+split_index <- round(0.8 * nrow(data1_final))
+train_data1 <- data1_final %>% filter(row_number() <= split_index)  
+test_data1 <- data1_final %>% filter(row_number() > split_index)
+
+cutoff_date <- as.Date("2023-02-01")  
+test_data2 <- data2_dummies %>% filter(t >= cutoff_date)
+train_data2 <- data2_dummies %>% filter(t < cutoff_date)
+
+# All-in-One Forecast Models
+# Data1
+horizon_data1 <- nrow(test_data1)
+forecasts_all_data_1 <- train_data1 %>%
+  model(
+    Naive = NAIVE(value),
+    Mean = MEAN(value),
+    Snaive = SNAIVE(value),
+    Drift = RW(value ~ drift()),
+    Trend = TSLM(value ~ trend()) # New Model
+  ) %>%
+  forecast(h = horizon_data1)
+
+# Data2
+horizon_data2 <- nrow(test_data2)
+forecasts_all_data2 <- train_data2 %>%
+  model(
+    Naive = NAIVE(u),
+    Mean = MEAN(u),
+    Snaive = SNAIVE(u),
+    Drift = RW(u ~ drift()),
+    TSLM(u ~ trend() + month + day_of_week)
+  ) %>%
+  forecast(new_data = test_data2)
+
+```
+
+```{r Visualizing models and predictions}
+Model_data1 <-train_data1 %>%
+  model(TSLM(value ~ trend()))%>%
+  forecast(h = horizon_data1)
+
+Model_data2 <-train_data2%>%
+  model(TSLM(u ~ trend() + month + day_of_week))%>%
+  forecast(new_data = test_data2)
+
+grid.arrange(
+  autoplot(Model_data1, train_data1) +
+    autolayer(test_data1, colour = "red", size = 0.4, linetype = "dashed") +
+    labs(
+      title = "Models Data 1: Forecast and Observations",
+      x = "Time",
+      y = "Value"
+    ) +
+    theme_minimal(),
+  
+  autoplot(Model_data2, train_data2) +
+    autolayer(test_data2, colour = "red", size = 0.4, linetype = "dashed") +
+    labs(
+      title = "Models Data 2: Forecast and Observations",
+      x = "Time",
+      y = "Value"
+    ) +
+    theme_minimal(),
+  ncol = 1 
+)
+```
+
+```{r Accuracy metrics for data1 and data2}
+accuracy_metrics1 <- forecasts_all_data_1 %>%
+  accuracy(test_data1)
+
+accuracy_metrics2 <- forecasts_all_data2 %>%
+  accuracy(test_data2)
+```
+
+```{r Data1}
+accuracy_metrics1
+```
+
+The Trend model achieves the best accuracy, with the lowest root mean
+square error (RMSE) of 25.72 and mean absolute error (MAE) of 20.18,
+demonstrating its superior ability to capture the underlying trends in
+`data1` compared to baseline models.
+
+```{r Data2}
+accuracy_metrics2
+```
+
+The Trend model incorporating trend, monthly, and weekday effects
+achieves the highest accuracy for `data2`compared to other simple
+models, with the lowest root mean square error (RMSE) of 1.02 and mean
+absolute error (MAE) of 0.80.
+
+```{r Median Absolute Deviation for Data1}
+tibble(
+  .model = forecasts_all_data_1$.model,          
+  fc_error = forecasts_all_data_1$.mean - test_data1$value ) %>%
+  group_by(.model) %>%                       
+  summarise(MAD = median(abs(fc_error), na.rm = TRUE)) 
+```
+
+The Trend model demonstrates the best performance for `data1`, with a
+median absolute deviation (MAD) of 17.10.
+
+```{r Median Absolute Deviation for Data2}
+tibble(
+  .model = forecasts_all_data2$.model,
+  fc_error = forecasts_all_data2$.mean- test_data2$u)%>%
+  group_by(.model)%>%
+    summarise(MAD = median(abs(fc_error), na.rm = TRUE))
+
+
+```
+
+For `data2,` the combined model with trend, monthly, and day-of-week
+effects outperforms all others, achieving the lowest median absolute
+deviation (MAD) of 0.60.
